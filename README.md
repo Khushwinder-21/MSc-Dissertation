@@ -1,6 +1,3 @@
-# MSc-Dissertation
-
-
 # Patient Treatment List (PTL) Consolidation Project
 
 This repository contains code and data for modelling the impact of consolidating multiple Patient Treatment Lists (PTLs) across NHS and independent providers. The project combines queueing theory, discrete-event simulation, and reinforcement learning to evaluate waiting time reductions and utilisation improvements.
