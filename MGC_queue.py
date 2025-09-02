@@ -97,7 +97,7 @@ class MGcQueueClass:
         mgc_results['cv'] = cv
         return mgc_results
     
-    def analyze_separate_provider(self, provider_data, provider_type):
+    def run_analysis(self, provider_data, provider_type):
         """Analysing single provider with adjusted service rates"""
         # Get parameters
         annual_volume = provider_data.get('annual_volume_2024', 0)
@@ -209,9 +209,8 @@ class MGcQueueClass:
             'total_wait': total_wait
         }
 
-def run_corrected_analysis():
-    """Run analysis with smart routing and realistic wait times"""
-    print("CORRECTED PTL ANALYSIS WITH SMART ROUTING")
+def run_analysis():
+    """Run analysis with realistic wait times"""
     start_time = time.time()
     # Load data
     print("\nLoading data")
@@ -266,7 +265,7 @@ def run_corrected_analysis():
         provider_name = provider['provider']
         provider_type = 'NHS' if 'NHS' in provider['provider_type'] else 'Independent'
         
-        result = mgc_analyzer.analyze_separate_provider(provider, provider_type)
+        result = mgc_analyzer.run_analysis(provider, provider_type)
         
         if result:
             separate_results.append(result)
@@ -309,4 +308,4 @@ def run_corrected_analysis():
     
 
 if __name__ == "__main__":
-    run_corrected_analysis()
+    run_analysis()
