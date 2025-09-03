@@ -50,7 +50,7 @@ ROUTINE_CODE = 1  # source data convention
 ELIGIBLE_TO_TRANSFER = {1: True, 2: False, 3: False}  # Routine only
 MAX_TRANSFER_SHARE = 0.25  # ≤ 25% of arrivals per home provider can be redirected
 
-# Columns in patient CSV
+# Columns in patient CSV to handle descripancies in naming of the columns
 PROVIDER_COL_CANDIDATES = ["Provider", "provider", "TrustName", "trust"]
 DATE_COL_CANDIDATES = [
     "Start_clock_date", "End_clock_date",
@@ -114,11 +114,11 @@ def load_patients(path: str):
     df = df.dropna(subset=[date_col])
 
     # Map priority codes to ranks AND keep original code for transfer eligibility
-    df["_prio_code"] = df[prio_col].astype(int)
-    df["_prio_rank"] = df["_prio_code"].map(PRIORITY_RANK).fillna(2).astype(int)
+    df["prio_code"] = df[prio_col].astype(int)
+    df["prio_rank"] = df["prio_code"].map(PRIORITY_RANK).fillna(2).astype(int)
 
-    out = df[[prov_col, date_col, "_prio_rank", "_prio_code"]].rename(
-        columns={prov_col: "provider", date_col: "ref_date", "_prio_rank": "prio", "_prio_code": "prio_code"}
+    out = df[[prov_col, date_col, "prio_rank", "prio_code"]].rename(
+        columns={prov_col: "provider", date_col: "ref_date", "prio_rank": "prio", "prio_code": "prio_code"}
     )
 
     # basic priority mix used for generating arrivals
@@ -283,14 +283,14 @@ def patient(env, pid, provider_name, prio, res_map, prov_cfg, monitors):
     # If provider is inside its closed weekly, wait until it re-opens
     gate = wait_until_provider_open(env, env.now)
     if gate is not None:
-        yield gate
+        yield gate # wait until open
 
     arrive_t = env.now
     res = res_map[provider_name]
 
     # Request theatre with priority
     req = res.request(priority=prio)
-    yield req
+    yield req # wait in queue
 
     # If provider moved into the closed tail while we waited, delay actual start until open
     gate2 = wait_until_provider_open(env, env.now)
@@ -303,15 +303,20 @@ def patient(env, pid, provider_name, prio, res_map, prov_cfg, monitors):
 
     # Measure queue wait up to the moment service is about to start
     wait_t = env.now - arrive_t
+    F_patient = draw_patient_factor()
+    # Dynamic cancellation probability
+    P_cancel = P_BASE * (1 + ALPHA * wait_t) * F_patient
+    P_cancel = min(P_cancel, 1.0)  # cap at 100%
     if arrive_t >= WARMUP_WEEKS:
         monitors.waits.append((provider_name, wait_t, prio, arrive_t))
 
-    # CANCELLATION / NO-SHOW at start (patient or provider)
-    cancel_p = CANCEL_PROB.get(prio, CANCEL_PROB[2])
-    if np.random.rand() < cancel_p:
+    # # CANCELLATION / NO-SHOW at start (patient or provider)
+    # cancel_p = CANCEL_PROB.get(prio, CANCEL_PROB[2])
+    if np.random.rand() < P_cancel:
         res.release(req)
         # reschedule after an exponential delay
         resched_delay = float(np.random.exponential(RESCHED_MEAN_WEEKS))
+        monitors['cancellations'] += 1
         def rescheduled():
             yield env.timeout(resched_delay)
             env.process(patient(env, f"{pid}-RS", provider_name, prio, res_map, prov_cfg, monitors))
@@ -323,7 +328,7 @@ def patient(env, pid, provider_name, prio, res_map, prov_cfg, monitors):
 
     # derieve service time based on provider mean & variability
     mean_st = prov_cfg[provider_name].mean_service_time
-    mu, sigma = lognormal_params_from_mean_cv(mean_st, SERVICE_TIME_CV)
+    mu, sigma = lognormal_params_from_mean_cv(mean_st, SERVICE_TIME_CV) #Healthcare times are positively skewed
     st = float(np.random.lognormal(mean=mu, sigma=sigma))
     yield env.timeout(st)
 
@@ -333,11 +338,47 @@ def patient(env, pid, provider_name, prio, res_map, prov_cfg, monitors):
         monitors.system_times.append((provider_name, env.now - arrive_t, arrive_t))
     res.release(req)
 
+P_BASE = 0.05   # 5% baseline cancellation probability
+ALPHA = 0.01    # sensitivity to waiting time (per week)
+
+def draw_patient_factor():
+    """Patient-specific cancellation modifier."""
+    return np.random.choice([0.8, 1.0, 1.2], p=[0.2, 0.6, 0.2])
+
+def f_day(t):
+    """Day-of-week factor (t in days)."""
+    day = int(t) % 7
+    if day in [0, 1]:  # Monday, Tuesday
+        return 1.2
+    elif day in [5, 6]:  # Saturday, Sunday
+        return 0.8
+    else:
+        return 1.0
+
+def f_week(t):
+    """Week-of-year factor (t in weeks)."""
+    week = int(t) % 52
+    if 48 <= week <= 52:  # Christmas dip
+        return 0.7
+    elif 1 <= week <= 8:  # January–February surge
+        return 1.3
+    else:
+        return 1.0
+
+def f_season(t):
+    """Seasonal cycle factor (t in weeks)."""
+    # Simple sinusoidal variation over the year
+    import math
+    return 1.0 + 0.2 * math.sin(2 * math.pi * (t % 52) / 52)
+
+
 
 def arrival_process(env, provider_name, weekly_lambda, res_map, prov_cfg, monitors):
     # Poisson arrivals with exponential inter-arrival times (in weeks)
     while True:
-        lam = max(weekly_lambda, 1e-9)
+        t = env.now / 7.0  # if env.now is in days
+        lam_t = weekly_lambda * f_day(env.now) * f_week(t) * f_season(t)
+        lam = max(lam_t, 1e-9)
         iat = np.random.exponential(scale=1.0/lam)
         yield env.timeout(iat)
         prio = draw_priority()

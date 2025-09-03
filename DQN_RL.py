@@ -63,6 +63,7 @@ class Provider:
     
     @property
     def current_wait(self):
+        # W_total = W_q + B₀/μ_effective
         # Current wait time based on queue length and capacity
         if self.capacity_per_week == 0:
             return 60.0

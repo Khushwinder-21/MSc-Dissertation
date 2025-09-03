@@ -4,7 +4,7 @@ import pandas as pd
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from ptl_des_simulator_sim_py_separate_vs_consolidated import (
+from DES_simulation import (
     # data loading + helpers
     load_patients, load_capacity, infer_provider_weekly_arrivals,
     calibrate_arrivals_per_provider_to_util, build_provider_configs,
@@ -296,7 +296,7 @@ class RoutingRL:
         self.log_rows = []
 
     def estimate_baseline_wait(self, n_reps=6):
-        from ptl_des_simulator_sim_py_separate_vs_consolidated import run_separate
+        from DES_simulation import run_separate
         waits = []
         base = RANDOM_SEED + 123
         for r in range(n_reps):
@@ -342,7 +342,7 @@ class RoutingRL:
 
         # NHS starvation check
         nhs_utils = [util[p] for p in self.providers if p in NHS_PROVIDERS]
-        nhs_starved = int(any(u < 0.05 for u in nhs_utils))  # crude proxy; you can replace by flow-based check
+        nhs_starved = int(any(u < 0.05 for u in nhs_utils))  
 
         #  encourage modest movement
         cost = 0.01 * moved_share 
